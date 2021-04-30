@@ -2,6 +2,7 @@ import configparser
 import os
 import threading
 import time
+from multiprocessing import Pool
 
 import requests
 from selenium import webdriver
@@ -127,49 +128,73 @@ def downloadMp3(driver, ini_file):
     mkdirPath(music_dir)
     music_urls = music_cf.options(MP3_SRC_SECTION)
     print("歌曲总数量:", len(music_urls), "从[", download_index, "]开始下载")
-
-    # 使用多线程处理, 需要将数量进行分割处理
-    print("====================多线程下载================")
+    # 分页并行处理
     pages = html_cf.options(PAGE_SECTION)
-    threads = []
+    page_len = len(pages)
     index = -1
     index_start = download_index
     index_end = 100 + download_index
-    # 根据页数创建线程, 每页一个线程
-    for p in pages:
+    # # 使用多线程处理, 需要将数量进行分割处理
+    # print("====================多线程下载================")
+    # threads = []
+    # # 根据页数创建线程, 每页一个线程
+    # for p in range(0, page_len):
+    #     index += 1
+    #     if index > 0:
+    #         index_start = index * 100 + download_index
+    #         index_end += 100
+    #     thread_name = "t-" + str(index)
+    #     print(thread_name, "下载开始位置:", index_start, "下载结束位置:", index_end)
+    #     mp3s = music_urls[index_start:index_end]
+    #     t = threading.Thread(target=doDownload, args=(mp3s, music_dir, music_cf,), name=thread_name, daemon=True)
+    #     threads.append(t)
+    #
+    # for t in threads:
+    #     t.start()
+    #     time.sleep(1)
+    #
+    # for t in threads:
+    #     if t.is_alive():
+    #         t.join()
+
+    # 使用多进程处理, 需要将数量进行分割处理
+    print("====================多进程下载================pid: %s" % os.getpid())
+    # 根据页数创建进程数, 每页一个进程
+    pool = Pool(page_len)
+    for p in range(0, page_len):
         index += 1
         if index > 0:
             index_start = index * 100 + download_index
             index_end += 100
-        thread_name = "t-" + str(index)
-        print(thread_name, "下载开始位置:", index_start, "下载结束位置:", index_end)
         mp3s = music_urls[index_start:index_end]
-        t = threading.Thread(target=doDownload, args=(mp3s, music_dir, music_cf,), name=thread_name, daemon=True)
-        threads.append(t)
-
-    for t in threads:
-        t.start()
+        pool.apply_async(func=doDownload, args=(mp3s, music_dir, music_cf,))
         time.sleep(1)
 
-    for t in threads:
-        if t.is_alive():
-            t.join()
+    pool.close()
+    pool.join()
 
-    print("=====================下载完成=================")
+    print("=====================下载完成=================pid: %s" % os.getpid())
 
 
 def doDownload(options, music_dir, music_cf):
-    print(threading.current_thread().name, "==>下载数量:", len(options))
+    print("[%s]-pid:[%s]==>下载数量: %s" % (threading.current_thread().name, os.getpid(), len(options)))
     for src in options:
         file_path = os.path.join(music_dir, src)
         # 只下载一次,存在则不下载
         if os.path.exists(file_path):
             continue
-        print(threading.current_thread().name, ">>> 正在下载:", src)
-        res = requests.get(music_cf.get(MP3_SRC_SECTION, src))
-        with open(file_path, 'wb') as fd:
-            for r in res.iter_content():
-                fd.write(r)
+        print("[%s]-pid:[%s] >>> 正在下载: %s" % (threading.current_thread().getName(), os.getpid(), src))
+        music_url = music_cf.get(MP3_SRC_SECTION, src)
+        try:
+            res = requests.get(music_url)
+            with open(file_path, 'wb') as fd:
+                for r in res.iter_content():
+                    fd.write(r)
+        except Exception as err:
+            print("[%s]-pid:[%s]==>[%s]下载失败, 下载链接[%s]. 失败信息==> %s" %
+                  (threading.current_thread().getName(), os.getpid(), src, music_url, err))
+
+    print("[%s]-pid:[%s]==>下载完成." % (threading.current_thread().name, os.getpid()))
 
 
 def mkdirPath(dir_path):
